@@ -11,7 +11,12 @@ from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from io import BytesIO
 from PIL import Image, ImageStat
-from fpdf import FPDF
+
+# Importaciones de ReportLab (Reemplazando a FPDF)
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # Configuración
 load_dotenv()
@@ -28,30 +33,21 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- FUNCIONES DE UTILIDAD ---
-def sanear_texto(texto, max_palabra=45):
-    if texto is None:
-        return ""
-    texto = texto.encode("latin-1", "replace").decode("latin-1")
-    palabras = texto.split(" ")
-    palabras_seguras = []
-    for palabra in palabras:
-        if len(palabra) > max_palabra:
-            partes = [palabra[j:j + max_palabra] for j in range(0, len(palabra), max_palabra)]
-            palabras_seguras.append(" ".join(partes))
-        else:
-            palabras_seguras.append(palabra)
-    return " ".join(palabras_seguras)
-
-def escribir_linea_pdf_segura(pdf, alto, texto, fallback_max=200):
-    try:
-        pdf.multi_cell(0, alto, text=texto)
-    except Exception:
-        texto_truncado = texto[:fallback_max] + ("..." if len(texto) > fallback_max else "")
-        try:
-            pdf.multi_cell(0, alto, text=texto_truncado)
-        except Exception:
-            pass
+# --- FUNCIONES DE UTILIDAD PARA PDF ---
+def formatear_texto_reportlab(texto):
+    # Filtro Anti-LaTeX
+    texto = texto.replace("$", "")
+    texto = texto.replace("\\Delta", "Δ").replace("\\eta", "η").replace("\\approx", "≈")
+    texto = texto.replace("\\cdot", "·").replace("\\times", "x").replace("\\quad", " ")
+    texto = texto.replace("\\text", "").replace("\\{", "(").replace("\\}", ")")
+    texto = texto.replace("\\frac", "")
+    texto = texto.replace("\\", "")
+    
+    # Escapar XML y aplicar Markdown
+    texto = texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    texto = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', texto)
+    texto = re.sub(r'\*(.*?)\*', r'<i>\1</i>', texto)
+    return texto
 
 def crear_archivo_pdf_guia_apoyo(asignatura, tema, nivel):
     if not api_key: return None
@@ -60,10 +56,17 @@ def crear_archivo_pdf_guia_apoyo(asignatura, tema, nivel):
     Redacta una Guía de Apoyo Académico Complementaria, exhaustiva y de riguroso NIVEL UNIVERSITARIO sobre '{tema}' para la asignatura de '{asignatura}' (Contexto de dificultad base: {nivel}).
     
     REQUISITOS OBLIGATORIOS PARA LA GUÍA:
-    1. Rigor conceptual, técnico y formal propio de educación superior.
-    2. Si el tema involucra modelos matemáticos, físicos, químicos o de ingeniería, incluye explícitamente las ecuaciones analíticas completas, la deducción de expresiones clave, la definición detallada de cada variable, sus unidades y significado.
+    1. Rigor conceptual, técnico y formal.
+    2. Si el tema involucra modelos matemáticos, incluye explícitamente las ecuaciones analíticas completas, la definición de cada variable, sus unidades y significado.
     3. Estructura el documento utilizando subtítulos claros con '##'.
     4. Incluye un apartado formal con un problema o ejercicio complejo resuelto paso a paso.
+    
+    INSTRUCCIONES CRÍTICAS Y ESTRICTAS DE FORMATO MATEMÁTICO:
+    - ESTÁ ESTRICTAMENTE PROHIBIDO utilizar código LaTeX. NO uses el símbolo de dólar bajo ninguna circunstancia.
+    - NO utilices comandos con barras invertidas (como \\frac, \\Delta, \\eta).
+    - Escribe todas las fórmulas en TEXTO PLANO lineal.
+    - Usa palabras o símbolos de texto básicos. (Ejemplo correcto: "Eficiencia = 1 - (T_frio / T_caliente)").
+    - Utiliza negritas (**texto**) para conceptos clave.
     """
     try:
         resp = client.messages.create(
@@ -74,32 +77,43 @@ def crear_archivo_pdf_guia_apoyo(asignatura, tema, nivel):
     except Exception as e:
         texto_guia = f"Error al generar el contenido de la guía: {e}"
 
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.set_font("helvetica", "B", 16)
-    pdf.cell(0, 10, text=sanear_texto(f"FlashClass - Guía de Apoyo: {tema}"), new_x="LMARGIN", new_y="NEXT", align="C")
-    pdf.set_font("helvetica", "I", 11)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 10, text=sanear_texto(f"Asignatura: {asignatura} | Nivel Universitario Riguroso"), new_x="LMARGIN", new_y="NEXT", align="C")
-    pdf.ln(8)
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font("helvetica", "", 10)
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=letter,
+        rightMargin=54, leftMargin=54, topMargin=54, bottomMargin=54
+    )
+    
+    styles = getSampleStyleSheet()
+    titulo_style = ParagraphStyle('TituloGuia', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=18, leading=22, alignment=1, textColor=colors.HexColor('#1A237E'))
+    subtitulo_style = ParagraphStyle('SubtituloGuia', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=13, leading=17, textColor=colors.HexColor('#0D47A1'), spaceBefore=14, spaceAfter=6)
+    cuerpo_style = ParagraphStyle('CuerpoGuia', parent=styles['Normal'], fontName='Helvetica', fontSize=10, leading=15, textColor=colors.HexColor('#212121'), spaceAfter=6)
+    lista_style = ParagraphStyle('ListaGuia', parent=cuerpo_style, leftIndent=15, spaceAfter=3)
+
+    story = []
+    story.append(Paragraph(f"Guía de Apoyo: {tema}", titulo_style))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(f"<b>Asignatura:</b> {asignatura} | <i>FlashClass</i>", ParagraphStyle('Sub', parent=cuerpo_style, alignment=1, fontName='Helvetica-Oblique', textColor=colors.gray)))
+    story.append(Spacer(1, 8))
+    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#BDBDBD'), spaceAfter=12))
 
     for linea in texto_guia.split("\n"):
         linea_limpia = linea.strip()
         if not linea_limpia:
-            pdf.ln(3)
+            story.append(Spacer(1, 4))
             continue
         if linea_limpia.startswith("## ") or linea_limpia.startswith("# "):
-            pdf.set_font("helvetica", "B", 12)
-            escribir_linea_pdf_segura(pdf, 7, sanear_texto(linea_limpia.replace("#", "").strip()))
-            pdf.set_font("helvetica", "", 10)
-            pdf.ln(2)
+            texto_limpio = linea_limpia.replace("#", "").strip()
+            story.append(Paragraph(formatear_texto_reportlab(texto_limpio), subtitulo_style))
+        elif linea_limpia.startswith("- ") or linea_limpia.startswith("* ") or re.match(r'^[a-z]\)', linea_limpia):
+            story.append(Paragraph(f"• {formatear_texto_reportlab(linea_limpia[2:].strip())}", lista_style))
         else:
-            escribir_linea_pdf_segura(pdf, 5.5, sanear_texto(linea_limpia))
-    return bytes(pdf.output())
+            story.append(Paragraph(formatear_texto_reportlab(linea_limpia), cuerpo_style))
 
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+# --- FUNCIONES DE UTILIDAD PARA PPTX ---
 def es_imagen_oscura(imagen_bytes):
     try:
         img = Image.open(imagen_bytes).convert('L')
@@ -226,7 +240,7 @@ def generar_clase():
                 messages=[{"role": "user", "content": prompt_docente}]
             )
             if respuesta.stop_reason == "max_tokens":
-                st.error("La clase se corto por limite de tokens.")
+                st.error("La clase se cortó por límite de tokens.")
                 return False
             texto_crudo = "".join(b.text for b in respuesta.content if hasattr(b, "text"))
             datos_json = extraer_json_de_texto(texto_crudo)
@@ -242,8 +256,8 @@ def generar_clase():
 
 # --- ESTADO DE SESIÓN ---
 if "clase_generada" not in st.session_state: st.session_state.clase_generada = None
-if "carrera" not in st.session_state: st.session_state.carrera = "Ingenieria Civil"
-if "tema" not in st.session_state: st.session_state.tema = "Leyes de la Termodinamica"
+if "carrera" not in st.session_state: st.session_state.carrera = "Ingeniería Civil"
+if "tema" not in st.session_state: st.session_state.tema = "Leyes de la Termodinámica"
 if "nivel" not in st.session_state: st.session_state.nivel = "Introductorio"
 if "incluir_ejercicios" not in st.session_state: st.session_state.incluir_ejercicios = True
 if "archivo_ppt_final" not in st.session_state: st.session_state.archivo_ppt_final = None
@@ -262,7 +276,7 @@ if st.session_state.clase_generada is None:
     with st.form("formulario_inicial"):
         st.session_state.carrera = st.text_input("Asignatura", value=st.session_state.carrera)
         st.session_state.tema = st.text_input("Tema de la clase", value=st.session_state.tema)
-        st.session_state.nivel = st.selectbox("Nivel academico", ["Introductorio", "Intermedio", "Avanzado"], index=["Introductorio", "Intermedio", "Avanzado"].index(st.session_state.nivel))
+        st.session_state.nivel = st.selectbox("Nivel académico", ["Introductorio", "Intermedio", "Avanzado"], index=["Introductorio", "Intermedio", "Avanzado"].index(st.session_state.nivel))
         st.session_state.incluir_ejercicios = st.checkbox("Incluir ejercicios", value=st.session_state.incluir_ejercicios)
         if st.form_submit_button("Generar Borrador PPT", use_container_width=True):
             if generar_clase(): st.rerun()
@@ -294,7 +308,7 @@ else:
         with st.expander(f"Diapositiva {i + 1}: {diapo['titulo']}", expanded=True):
             col_texto, col_img = st.columns([2, 2])
             with col_texto:
-                diapo["titulo"] = st.text_input("Titulo", value=diapo["titulo"], key=f"t_{i}")
+                diapo["titulo"] = st.text_input("Título", value=diapo["titulo"], key=f"t_{i}")
                 diapo["contenido"] = st.text_area("Contenido", value=diapo["contenido"], key=f"c_{i}", height=150)
                 diapo["mantener"] = st.checkbox("Incluir en el PPT final", value=diapo["mantener"], key=f"m_{i}")
             with col_img:
@@ -333,7 +347,7 @@ else:
     st.markdown("---")
     st.subheader("Finalizar y Descargar")
 
-    if st.button("Generar Presentacion PPTX", use_container_width=True, type="primary"):
+    if st.button("Generar Presentación PPTX", use_container_width=True, type="primary"):
         with st.spinner("Ensamblando presentación PowerPoint..."):
             st.session_state.archivo_ppt_final = crear_archivo_pptx(datos, plantilla_subida, fondo_subido)
         st.success("¡Presentación lista para descargar!")
@@ -342,12 +356,16 @@ else:
         st.markdown("---")
         col_d1, col_d2 = st.columns(2)
         with col_d1:
-            st.download_button("Descargar Presentacion (.pptx)", data=st.session_state.archivo_ppt_final, file_name=f"FlashClass_{st.session_state.tema.replace(' ', '_')}.pptx", mime="application/vnd.openxmlformats-officedocument.presentationml.presentation", use_container_width=True)
+            st.download_button("Descargar Presentación (.pptx)", data=st.session_state.archivo_ppt_final, file_name=f"FlashClass_{st.session_state.tema.replace(' ', '_')}.pptx", mime="application/vnd.openxmlformats-officedocument.presentationml.presentation", use_container_width=True)
         with col_d2:
-            if st.button("Generar guia de apoyo (Rigor universitario)", use_container_width=True):
-                with st.spinner("Claude redactando guia avanzada..."):
+            if st.button("Generar guía de apoyo (Rigor universitario)", use_container_width=True):
+                with st.spinner("Claude redactando guía avanzada..."):
                     st.session_state.archivo_pdf_guia = crear_archivo_pdf_guia_apoyo(st.session_state.carrera, st.session_state.tema, st.session_state.nivel)
                 st.rerun()
+
+    if st.session_state.archivo_pdf_guia is not None:
+        st.success("Guía de apoyo lista:")
+        st.download_button("Descargar Guía de Apoyo (.pdf)", data=st.session_state.archivo_pdf_guia, file_name=f"FlashClass_Guia_Apoyo_{st.session_state.tema.replace(' ', '_')}.pdf", mime="application/pdf", use_container_width=True)
 
     if st.session_state.archivo_pdf_guia is not None:
         st.success("Guia de apoyo lista:")
