@@ -30,7 +30,18 @@ if st.button("⬅️ Volver al Inicio"):
 
 # --- MOTOR DE PDF CON REPORTLAB ---
 def formatear_texto_reportlab(texto):
+    # 1. Filtro Anti-LaTeX: Limpiar símbolos matemáticos residuales
+    texto = texto.replace("$", "") # Elimina signos de dólar
+    texto = texto.replace("\\Delta", "Δ").replace("\\eta", "η").replace("\\approx", "≈")
+    texto = texto.replace("\\cdot", "·").replace("\\times", "x").replace("\\quad", " ")
+    texto = texto.replace("\\text", "").replace("\\{", "(").replace("\\}", ")")
+    texto = texto.replace("\\frac", "") # Evitar que imprima el comando de fracción
+    texto = texto.replace("\\", "") # Elimina barras invertidas restantes
+    
+    # 2. Escapar caracteres XML para ReportLab
     texto = texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    
+    # 3. Formato Markdown (Negritas y Cursivas)
     texto = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', texto)
     texto = re.sub(r'\*(.*?)\*', r'<i>\1</i>', texto)
     return texto
@@ -118,9 +129,14 @@ def redactar_guia_investigada(asignatura, tema, nivel, tipo):
     
     {enfoque_prompt}
     
-    INSTRUCCIONES GENERALES DE FORMATO:
+    INSTRUCCIONES CRÍTICAS Y ESTRICTAS DE FORMATO MATEMÁTICO:
+    - ESTÁ ESTRICTAMENTE PROHIBIDO utilizar código LaTeX. NO uses el símbolo de dólar bajo ninguna circunstancia.
+    - NO utilices comandos con barras invertidas (como \\frac, \\Delta, \\eta).
+    - Escribe todas las fórmulas en TEXTO PLANO lineal.
+    - Usa palabras o símbolos de texto básicos. (Ejemplo correcto: "Eficiencia = 1 - (T_frio / T_caliente)", "Delta U = Q - W").
+    
+    INSTRUCCIONES GENERALES:
     - NO coloques títulos genéricos como "Marco Teórico". Inicia directamente explicando el tema de forma orgánica.
-    - Utiliza notación matemática clara y legible (ej: T(K) = T(°C) + 273.15, Delta U = Q - W).
     - Utiliza negritas (**texto**) para conceptos clave.
     - Estructura con '##' para cada sección y finaliza con la '## Bibliografía Consultada (Formato APA)'.
     """
