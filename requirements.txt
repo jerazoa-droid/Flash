@@ -1,0 +1,8 @@
+streamlit
+anthropic
+python-dotenv
+python-pptx
+reportlab
+pillow
+requests
+fpdf
